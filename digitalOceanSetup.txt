@@ -1,0 +1,155 @@
+# Access server machine via ssh
+ssh root@<server-ip-address>
+# Update apt-get
+apt-get update
+# Install PostgreSQL
+apt-get install postgresql postgresql-contrib
+# Access user with PostgreSQL permission
+# sudo -i -u postgres
+# Create new user
+adduser pclavier
+# Give new user access to root
+# User Privilege: pclavier ALL=(ALL:ALL) ALL
+visudo
+# Do not permit root login with ssh and allow new user
+# AllowUsers pclavier
+# PasswordAuthentication yes 
+vi /etc/ssh/sshd_config
+service sshd reload
+# Exit ssh as root
+exit
+# Re-access via ssh using new user
+ssh pclavier@<server-ip-address>
+# Become root user
+sudo su
+# Become postgres user
+sudo -i -u postgres
+# Create postgres user with same name as UNIX user
+createuser pclavier -P
+# Create database for user
+createdb pclavier
+# Go back to being the new user
+exit
+exit
+# Ensure PostgreSQL always ask for user and password
+# SQLAlchemy wont work unless we do this
+# local for Unix from peer to md5
+sudo vim /etc/postgresql/10/main/pg_hba.conf
+# More updates ?
+sudo apt-get update
+# Install nginx
+sudo apt-get install nginx
+# Let nginx have access through the firewall
+# Check firewall status
+sudo ufw status
+# Activate firewall
+sudo ufw enable
+# Give access to ssh
+sudo ufw allow ssh
+# Give nginx access
+sudo ufw allow 'Nginx HTTP'
+# Check that nginx is running
+systemctl status nginx
+# systemctl start nginx
+# systemctl stop nginx
+# systemctl restart nginx
+# Add our rest api to nginx config
+sudo vim /etc/nginx/sites-available/items-rest.conf
+# (Nginx config)
+server {
+    listen 80;
+    real_ip_header X-Forwarded-For;
+    set_real_ip_from 127.0.0.1;
+    server_name localhost;
+
+    location / {
+        include uwsgi_params;
+        uwsgi_pass unix:/var/www/html/items-rest/socket.sock;
+        uwsgi_modifier1 30;
+    }
+
+    error_page 404 /404.html;
+    location = /404.html {
+        root /usr/share/nginx/html;
+    }
+
+    error_page 400 502 503 504 /50x.html;
+    location = /50x.html {
+        root /usr/share/nginx/html;
+    }
+}
+# Enable nginx config
+sudo ln -s /etc/nginx/sites-available/items-rest.conf /etc/nginx/sites-enabled/
+# This is where our application is going to live
+sudo mkdir /var/www/html/items-rest
+# Give access to that directory to the new user
+sudo chown pclavier:pclavier /var/www/html/items-rest
+# Go to that directory
+cd /var/www/html/items-rest
+# Clone our app
+git clone https://github.com/pclavier92/flask-restful-api.git .
+# Add logs to our app
+mkdir log
+# Install python
+sudo apt-get install python-pip python3-dev libpq-dev 
+# Install virtualenv
+pip install virtualenv
+# Create virtual environment
+virtualenv venv --python=python3.7
+# Go into the virtual environment
+source venv/bin/activate
+# Install python dependencies
+pip install -r requirements.txt
+# Setup uwsgi
+# Create new service
+sudo vim /etc/systemd/system/uwsgi-items-rest.service
+# postgres://user:password@url:port/database
+
+# (uwsgi service)
+[Unit]
+Description=uWSGI items rest
+
+[Service]
+Environment=DATABASE_URL=postgres://pclavier:250392@localhost:5432/pclavier
+ExecStart=/var/www/html/items-rest/venv/bin/uwsgi --master --emperor /var/www/html/items-rest/uwsgi.ini --die-on-term --uid pclavier --gid pclavier --logto /var/www/html/items-rest/log/emperor.log
+Restart=always
+KillSignal=SIGQUIT
+Type=notify
+NotifyAccess=all
+
+[Install]
+WantedBy=multi-user.target
+
+# Change the uwsgi.ini file
+# (uwsgi.ini)
+[uwsgi]
+base = /var/www/html/items-rest
+app = run
+module = %(app)
+
+home = %(base)/venv
+pythonpath = %(base)
+
+socket = %(base)/socket.sock
+
+chmod-socket = 777
+processes = 8
+threads = 8
+
+harakiri = 15
+
+callable = app
+
+logto = /var/www/html/items-rest/log/%n.log
+
+# Start our app with service
+sudo systemctl start uwsgi-items-rest
+# Remove default nginx configuration
+sudo rm /etc/nginx/sites-enabled/default
+# Reload and restart nginx
+sudo systemctl reload nginx
+sudo systemctl restart nginx
+# Start service
+sudo systemctl start uwsgi-items-rest
+
+
